@@ -1,228 +1,323 @@
 import json
-from pathlib import Path
 from datetime import datetime, timezone
-import requests
+from typing import Any, Dict, List, Optional, Tuple
+
 import pandas as pd
+import requests
 import streamlit as st
 
 LEAGUE_ID = "1322264688641216512"
 DRAFT_ID = "1322264688645390336"
-HORO_DISPLAY = "HORO1"
+HORO_DISPLAY_NAME = "HORO1"
 BASE = "https://api.sleeper.app/v1"
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
 
-st.set_page_config(page_title="HoRo Dynasty War Room", page_icon="🏈", layout="wide")
+st.set_page_config(page_title="HoRo War Room", page_icon="🏈", layout="wide")
+
+st.markdown("""
+<style>
+.block-container {padding-top: 1.2rem;}
+.metric-card {border: 1px solid #2b3240; border-radius: 14px; padding: 14px; background: #0f1724;}
+.small-muted {color: #8a94a6; font-size: 0.9rem;}
+.big-title {font-size: 2.1rem; font-weight: 800; margin-bottom: 0;}
+</style>
+""", unsafe_allow_html=True)
 
 @st.cache_data(ttl=60)
-def get_json(url):
+def get_json(url: str) -> Any:
     r = requests.get(url, timeout=20)
     r.raise_for_status()
     return r.json()
 
-def sleeper(path):
-    return get_json(f"{BASE}{path}")
+@st.cache_data(ttl=3600)
+def get_players() -> Dict[str, Any]:
+    return get_json(f"{BASE}/players/nfl")
 
-def save_snapshot(name, obj):
-    DATA_DIR.mkdir(exist_ok=True)
-    (DATA_DIR / f"{name}.json").write_text(json.dumps(obj, indent=2), encoding="utf-8")
+@st.cache_data(ttl=60)
+def load_sleeper_bundle() -> Dict[str, Any]:
+    return {
+        "league": get_json(f"{BASE}/league/{LEAGUE_ID}"),
+        "users": get_json(f"{BASE}/league/{LEAGUE_ID}/users"),
+        "rosters": get_json(f"{BASE}/league/{LEAGUE_ID}/rosters"),
+        "draft": get_json(f"{BASE}/draft/{DRAFT_ID}"),
+        "picks": get_json(f"{BASE}/draft/{DRAFT_ID}/picks"),
+        "traded_picks": get_json(f"{BASE}/league/{LEAGUE_ID}/traded_picks"),
+        "state": get_json(f"{BASE}/state/nfl"),
+        "trending_add": get_json(f"{BASE}/players/nfl/trending/add?lookback_hours=24&limit=50"),
+        "trending_drop": get_json(f"{BASE}/players/nfl/trending/drop?lookback_hours=24&limit=50"),
+    }
 
-def load_rankings():
-    files = ["fantasycalc_dynasty_rankings.csv", "fantasycalc_dynasty_rookie_rankings.csv"]
-    dfs = []
-    for f in files:
-        p = Path(f)
-        if p.exists():
-            df = pd.read_csv(p)
-            df["source_file"] = f
-            dfs.append(df)
-    return dfs
-
-def normalize_rankings(dfs):
-    rows = []
-    for df in dfs:
-        cols = {c.lower().strip(): c for c in df.columns}
-        name_col = next((cols[x] for x in cols if x in ["player", "name", "player name"] or "player" in x and "id" not in x), None)
-        pos_col = next((cols[x] for x in cols if x in ["pos", "position"]), None)
-        team_col = next((cols[x] for x in cols if x in ["team", "nfl team"]), None)
-        rank_col = next((cols[x] for x in cols if x in ["rank", "overall rank", "overall"] or "rank" in x), None)
-        value_col = next((cols[x] for x in cols if "value" in x), None)
-        sleeper_col = next((cols[x] for x in cols if "sleeper" in x and "id" in x), None)
-        for _, r in df.iterrows():
-            name = r.get(name_col, None) if name_col else None
-            if pd.isna(name) or not name:
-                continue
-            sid = str(r.get(sleeper_col, "")).replace(".0", "") if sleeper_col else ""
-            val = r.get(value_col, None) if value_col else None
-            rank = r.get(rank_col, None) if rank_col else None
-            rows.append({
-                "player": str(name),
-                "pos": r.get(pos_col, "") if pos_col else "",
-                "team": r.get(team_col, "") if team_col else "",
-                "rank": rank,
-                "value": val,
-                "sleeper_id": sid,
-                "source": r.get("source_file", "rankings")
-            })
-    out = pd.DataFrame(rows)
-    if out.empty:
-        return out
-    out["rank_num"] = pd.to_numeric(out["rank"], errors="coerce")
-    out["value_num"] = pd.to_numeric(out["value"], errors="coerce")
-    out = out.sort_values(["rank_num", "value_num"], ascending=[True, False], na_position="last")
-    out = out.drop_duplicates(subset=["player", "pos"], keep="first")
+@st.cache_data(ttl=300)
+def load_rankings() -> pd.DataFrame:
+    paths = ["fantasycalc_dynasty_rankings.csv", "fantasycalc_dynasty_rookie_rankings.csv"]
+    frames = []
+    for path in paths:
+        try:
+            df = pd.read_csv(path)
+            df["_source"] = path
+            frames.append(df)
+        except Exception:
+            pass
+    if not frames:
+        return pd.DataFrame()
+    raw = pd.concat(frames, ignore_index=True)
+    cols = {c.lower().strip(): c for c in raw.columns}
+    def pick(*names):
+        for n in names:
+            if n in cols: return cols[n]
+        return None
+    name_col = pick("player", "name", "full_name", "player name")
+    pos_col = pick("position", "pos")
+    team_col = pick("team", "nfl team")
+    rank_col = pick("rank", "overall rank", "overall", "dynasty rank")
+    val_col = pick("value", "trade value", "fantasycalc value")
+    sleeper_col = pick("sleeper id", "sleeper_id", "sleeper player id", "player_id")
+    out = pd.DataFrame()
+    out["name"] = raw[name_col].astype(str) if name_col else ""
+    out["pos"] = raw[pos_col].astype(str) if pos_col else ""
+    out["team"] = raw[team_col].astype(str) if team_col else ""
+    out["rank"] = pd.to_numeric(raw[rank_col], errors="coerce") if rank_col else range(1, len(raw)+1)
+    out["value"] = pd.to_numeric(raw[val_col], errors="coerce") if val_col else None
+    out["sleeper_id"] = raw[sleeper_col].astype(str) if sleeper_col else ""
+    out["source"] = raw["_source"]
+    out = out.dropna(subset=["rank"]).sort_values(["rank", "source"])
+    out = out.drop_duplicates(subset=["sleeper_id", "name"], keep="first")
     return out
 
-st.title("🏈 HoRo Dynasty War Room")
-st.caption("Free shared web app powered by Sleeper + your FantasyCalc rankings")
+def player_name(pid: str, players: Dict[str, Any]) -> str:
+    if not pid or pid == "0": return "Empty"
+    if pid in ["ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB","HOU","IND","JAX","KC","LAC","LAR","LV","MIA","MIN","NE","NO","NYG","NYJ","PHI","PIT","SEA","SF","TB","TEN","WAS"]:
+        return f"{pid} DST"
+    p = players.get(str(pid), {})
+    return p.get("full_name") or p.get("first_name", "") + " " + p.get("last_name", "") or str(pid)
+
+def player_pos(pid: str, players: Dict[str, Any]) -> str:
+    if pid in ["ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB","HOU","IND","JAX","KC","LAC","LAR","LV","MIA","MIN","NE","NO","NYG","NYJ","PHI","PIT","SEA","SF","TB","TEN","WAS"]:
+        return "DEF"
+    return players.get(str(pid), {}).get("position", "")
+
+def player_team(pid: str, players: Dict[str, Any]) -> str:
+    if pid in ["ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB","HOU","IND","JAX","KC","LAC","LAR","LV","MIA","MIN","NE","NO","NYG","NYJ","PHI","PIT","SEA","SF","TB","TEN","WAS"]:
+        return pid
+    return players.get(str(pid), {}).get("team", "")
+
+def users_map(users: List[dict]) -> Dict[str, dict]:
+    return {u.get("user_id"): u for u in users}
+
+def rosters_map(rosters: List[dict]) -> Dict[int, dict]:
+    return {r.get("roster_id"): r for r in rosters}
+
+def team_label(roster: dict, users_by_id: Dict[str, dict]) -> str:
+    u = users_by_id.get(roster.get("owner_id"), {})
+    team = (u.get("metadata") or {}).get("team_name")
+    return team or u.get("display_name") or f"Roster {roster.get('roster_id')}"
+
+def get_horo_roster(rosters: List[dict], users_by_id: Dict[str, dict]) -> Optional[dict]:
+    for r in rosters:
+        u = users_by_id.get(r.get("owner_id"), {})
+        if u.get("display_name", "").lower() == HORO_DISPLAY_NAME.lower():
+            return r
+    return None
+
+def drafted_ids(picks: List[dict]) -> set:
+    return {str(p.get("player_id")) for p in picks if p.get("player_id")}
+
+def rostered_ids(rosters: List[dict]) -> set:
+    ids = set()
+    for r in rosters:
+        for pid in r.get("players") or []:
+            ids.add(str(pid))
+    return ids
+
+def draft_board_df(picks: List[dict], rosters_by_id: Dict[int, dict], users_by_id: Dict[str, dict]) -> pd.DataFrame:
+    rows = []
+    for p in sorted(picks, key=lambda x: x.get("pick_no", 0)):
+        meta = p.get("metadata") or {}
+        roster = rosters_by_id.get(p.get("roster_id"), {})
+        rows.append({
+            "Pick": p.get("pick_no"),
+            "Round": p.get("round"),
+            "Slot": p.get("draft_slot"),
+            "Player": f"{meta.get('first_name','')} {meta.get('last_name','')}".strip(),
+            "Pos": meta.get("position", ""),
+            "NFL": meta.get("team", ""),
+            "Selected By": team_label(roster, users_by_id),
+            "Sleeper ID": p.get("player_id"),
+        })
+    return pd.DataFrame(rows)
+
+def roster_df(roster: dict, players: Dict[str, Any]) -> pd.DataFrame:
+    rows = []
+    starters = set(roster.get("starters") or [])
+    taxi = set(roster.get("taxi") or [])
+    reserve = set(roster.get("reserve") or [])
+    for pid in roster.get("players") or []:
+        rows.append({
+            "Player": player_name(str(pid), players),
+            "Pos": player_pos(str(pid), players),
+            "NFL": player_team(str(pid), players),
+            "Slot": "Starter" if pid in starters else "Taxi" if pid in taxi else "IR" if pid in reserve else "Bench",
+            "Sleeper ID": pid,
+        })
+    return pd.DataFrame(rows).sort_values(["Slot", "Pos", "Player"])
+
+def best_available_df(rankings: pd.DataFrame, rosters: List[dict], picks: List[dict], players: Dict[str, Any]) -> pd.DataFrame:
+    if rankings.empty:
+        return pd.DataFrame()
+    unavailable = rostered_ids(rosters) | drafted_ids(picks)
+    df = rankings.copy()
+    df = df[~df["sleeper_id"].astype(str).isin(unavailable)]
+    # fill missing metadata from Sleeper by ID
+    def fill_name(row):
+        if row["name"] and row["name"].lower() not in ["nan", "none"]: return row["name"]
+        return player_name(str(row["sleeper_id"]), players)
+    df["Player"] = df.apply(fill_name, axis=1)
+    df["Pos"] = df.apply(lambda r: r["pos"] if r["pos"] and str(r["pos"]).lower() != "nan" else player_pos(str(r["sleeper_id"]), players), axis=1)
+    df["NFL"] = df.apply(lambda r: r["team"] if r["team"] and str(r["team"]).lower() != "nan" else player_team(str(r["sleeper_id"]), players), axis=1)
+    out = df.rename(columns={"rank": "Rank", "value": "Value", "source": "Source", "sleeper_id": "Sleeper ID"})
+    return out[["Rank", "Player", "Pos", "NFL", "Value", "Source", "Sleeper ID"]].head(100)
+
+def team_needs(roster: dict, players: Dict[str, Any]) -> str:
+    counts = {"QB":0,"RB":0,"WR":0,"TE":0}
+    for pid in roster.get("players") or []:
+        pos = player_pos(str(pid), players)
+        if pos in counts: counts[pos] += 1
+    needs = []
+    if counts["QB"] < 3: needs.append("QB")
+    if counts["RB"] < 5: needs.append("RB")
+    if counts["WR"] < 6: needs.append("WR")
+    if counts["TE"] < 2: needs.append("TE")
+    return ", ".join(needs) if needs else "Depth / value"
+
+def league_teams_df(rosters: List[dict], users_by_id: Dict[str, dict], players: Dict[str, Any]) -> pd.DataFrame:
+    rows=[]
+    for r in rosters:
+        counts = {"QB":0,"RB":0,"WR":0,"TE":0}
+        for pid in r.get("players") or []:
+            pos = player_pos(str(pid), players)
+            if pos in counts: counts[pos]+=1
+        u = users_by_id.get(r.get("owner_id"), {})
+        rows.append({"Roster": r.get("roster_id"), "Team": team_label(r, users_by_id), "Display": u.get("display_name"), **counts, "Needs": team_needs(r, players), "FAAB Used": (r.get("settings") or {}).get("waiver_budget_used")})
+    return pd.DataFrame(rows).sort_values("Roster")
+
+def trending_df(items: List[dict], players: Dict[str, Any]) -> pd.DataFrame:
+    rows=[]
+    for item in items:
+        pid=str(item.get("player_id"))
+        rows.append({"Player": player_name(pid, players), "Pos": player_pos(pid, players), "NFL": player_team(pid, players), "Count": item.get("count"), "Sleeper ID": pid})
+    return pd.DataFrame(rows)
 
 with st.sidebar:
-    st.header("Controls")
-    if st.button("🔄 Update Sleeper Data", use_container_width=True):
+    st.title("🏈 HoRo War Room")
+    st.caption("St. Jude Heroes Dynasty")
+    if st.button("🔄 Refresh Sleeper Data", use_container_width=True):
         st.cache_data.clear()
-        st.success("Refreshed. Reloading latest Sleeper data...")
-    st.markdown(f"**League:** `{LEAGUE_ID}`")
-    st.markdown(f"**Draft:** `{DRAFT_ID}`")
-    st.markdown(f"**Your account:** `{HORO_DISPLAY}`")
+        st.rerun()
+    st.divider()
+    st.write("League ID")
+    st.code(LEAGUE_ID)
+    st.write("Draft ID")
+    st.code(DRAFT_ID)
+    st.caption("Built for HORO1")
 
 try:
-    league = sleeper(f"/league/{LEAGUE_ID}")
-    users = sleeper(f"/league/{LEAGUE_ID}/users")
-    rosters = sleeper(f"/league/{LEAGUE_ID}/rosters")
-    draft = sleeper(f"/draft/{DRAFT_ID}")
-    picks = sleeper(f"/draft/{DRAFT_ID}/picks")
-    traded = sleeper(f"/league/{LEAGUE_ID}/traded_picks")
-    trending_add = sleeper("/players/nfl/trending/add?lookback_hours=24&limit=25")
-    trending_drop = sleeper("/players/nfl/trending/drop?lookback_hours=24&limit=25")
-    for n, o in [("league", league),("users", users),("rosters", rosters),("draft", draft),("draft_picks", picks),("traded_picks", traded)]:
-        save_snapshot(n, o)
+    bundle = load_sleeper_bundle()
+    players = get_players()
 except Exception as e:
-    st.error(f"Could not reach Sleeper API: {e}")
+    st.error(f"Could not load Sleeper data: {e}")
     st.stop()
 
-user_by_id = {u["user_id"]: u for u in users}
-owner_to_roster = {r.get("owner_id"): r.get("roster_id") for r in rosters}
-horo_user = next((u for u in users if str(u.get("display_name", "")).lower() == HORO_DISPLAY.lower()), None)
-horo_roster_id = owner_to_roster.get(horo_user["user_id"]) if horo_user else None
+rankings = load_rankings()
+users_by_id = users_map(bundle["users"])
+rosters_by_id = rosters_map(bundle["rosters"])
+horo = get_horo_roster(bundle["rosters"], users_by_id)
+league = bundle["league"]
+draft = bundle["draft"]
+picks = bundle["picks"]
 
-# Draft table
-pick_rows = []
-drafted_ids = set()
-for p in picks:
-    md = p.get("metadata", {}) or {}
-    player = f"{md.get('first_name','')} {md.get('last_name','')}".strip()
-    drafted_ids.add(str(p.get("player_id")))
-    user = user_by_id.get(str(p.get("picked_by")), {})
-    team_name = user.get("metadata", {}).get("team_name") or user.get("display_name", "")
-    pick_rows.append({
-        "Pick": p.get("pick_no"),
-        "Round": p.get("round"),
-        "Slot": p.get("draft_slot"),
-        "Player": player,
-        "Pos": md.get("position"),
-        "NFL": md.get("team"),
-        "Picked By": team_name,
-        "Roster ID": p.get("roster_id"),
-        "Sleeper ID": p.get("player_id")
-    })
-draft_df = pd.DataFrame(pick_rows)
+st.markdown('<p class="big-title">HoRo Dynasty War Room</p>', unsafe_allow_html=True)
+st.caption(f"Last refreshed in app: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
-owned_ids = set()
-for r in rosters:
-    for pid in r.get("players") or []:
-        owned_ids.add(str(pid))
-
-rankings = normalize_rankings(load_rankings())
-if not rankings.empty:
-    rankings["drafted"] = rankings["sleeper_id"].astype(str).isin(drafted_ids)
-    rankings["rostered"] = rankings["sleeper_id"].astype(str).isin(owned_ids)
-    available = rankings[(~rankings["drafted"]) & (~rankings["rostered"])]
-else:
-    available = pd.DataFrame()
-
-current_pick = league.get("metadata", {}).get("current_pick_no", draft.get("settings", {}).get("current_pick"))
-on_clock_id = league.get("metadata", {}).get("on_the_clock_user_id")
-on_clock_user = user_by_id.get(str(on_clock_id), {}) if on_clock_id else {}
-on_clock_name = on_clock_user.get("metadata", {}).get("team_name") or on_clock_user.get("display_name", "Unknown")
-
-c1, c2, c3, c4 = st.columns(4)
+c1,c2,c3,c4 = st.columns(4)
 c1.metric("Draft Status", draft.get("status", "unknown"))
-c2.metric("Current Pick", current_pick or "?")
-c3.metric("On Clock", on_clock_name)
+c2.metric("Current Pick", (league.get("metadata") or {}).get("current_pick_no", "—"))
+on_clock_id = (league.get("metadata") or {}).get("on_the_clock_user_id")
+on_clock = users_by_id.get(on_clock_id, {}).get("display_name", "—")
+c3.metric("On Clock", on_clock)
 c4.metric("Picks Made", len(picks))
 
-if horo_user:
-    st.success(f"Detected HORO1: roster {horo_roster_id}")
-else:
-    st.warning("HORO1 was not found in the users endpoint.")
-
-tabs = st.tabs(["Draft Board", "Best Available", "HoRo Roster", "League Teams", "Trade Ideas", "Trending", "Raw Data"])
+tabs = st.tabs(["🏈 Draft Board", "⭐ Best Available", "👤 HORO1", "👥 League Teams", "🤝 Trade Ideas", "📈 Trending", "⚙️ Data"])
 
 with tabs[0]:
     st.subheader("Live Draft Board")
-    st.dataframe(draft_df, use_container_width=True, hide_index=True)
+    board = draft_board_df(picks, rosters_by_id, users_by_id)
+    st.dataframe(board, use_container_width=True, hide_index=True)
 
 with tabs[1]:
     st.subheader("Best Available")
-    if available.empty:
-        st.info("FantasyCalc ranking files were not found or could not be parsed.")
+    ba = best_available_df(rankings, bundle["rosters"], picks, players)
+    if ba.empty:
+        st.warning("No rankings loaded. Make sure FantasyCalc CSV files are in this repo.")
     else:
-        show = available[["player", "pos", "team", "rank", "value", "source", "sleeper_id"]].head(75)
-        st.dataframe(show, use_container_width=True, hide_index=True)
-        st.markdown("### By Position")
-        for pos in ["QB", "RB", "WR", "TE"]:
-            posdf = available[available["pos"].astype(str).str.upper() == pos].head(15)
-            if not posdf.empty:
-                st.markdown(f"**{pos}**")
-                st.dataframe(posdf[["player", "team", "rank", "value", "source"]], use_container_width=True, hide_index=True)
+        pos = st.multiselect("Filter position", sorted([p for p in ba["Pos"].dropna().unique() if p]), default=[])
+        show = ba if not pos else ba[ba["Pos"].isin(pos)]
+        st.dataframe(show.head(50), use_container_width=True, hide_index=True)
+        st.info("Draft recommendation for HORO1: prioritize the top remaining WR/RB value unless an elite SuperFlex QB falls.")
 
 with tabs[2]:
-    st.subheader("HoRo / HORO1 Roster")
-    if horo_roster_id:
-        rr = next((r for r in rosters if r.get("roster_id") == horo_roster_id), None)
-        st.json(rr)
+    st.subheader("HORO1 Roster")
+    if not horo:
+        st.error("Could not find HORO1 in league users. Check display name spelling.")
     else:
-        st.info("HORO1 roster not detected.")
+        st.write(f"Roster ID: {horo.get('roster_id')} | Owner ID: {horo.get('owner_id')}")
+        st.dataframe(roster_df(horo, players), use_container_width=True, hide_index=True)
 
 with tabs[3]:
-    st.subheader("League Teams")
-    team_rows = []
-    for r in rosters:
-        u = user_by_id.get(str(r.get("owner_id")), {})
-        team_rows.append({
-            "Roster": r.get("roster_id"),
-            "Display": u.get("display_name"),
-            "Team Name": u.get("metadata", {}).get("team_name", ""),
-            "Players": len(r.get("players") or []),
-            "Taxi": len(r.get("taxi") or []),
-            "Reserve": len(r.get("reserve") or []),
-            "FAAB Used": r.get("settings", {}).get("waiver_budget_used")
-        })
-    st.dataframe(pd.DataFrame(team_rows), use_container_width=True, hide_index=True)
+    st.subheader("All League Teams")
+    teams = league_teams_df(bundle["rosters"], users_by_id, players)
+    st.dataframe(teams, use_container_width=True, hide_index=True)
 
 with tabs[4]:
-    st.subheader("Trade Ideas Framework")
-    st.write("Version 1 flags teams by roster size and pick inventory. More detailed player-value trade logic can be added next.")
-    pick_df = pd.DataFrame(traded)
-    if not pick_df.empty:
-        st.markdown("### Future Pick Movement")
-        st.dataframe(pick_df, use_container_width=True, hide_index=True)
-    st.markdown("### Quick targets")
-    st.write("Look for teams with surplus at your need positions and teams holding extra future picks. Use the League Teams + Best Available tabs together during the draft.")
+    st.subheader("Trade Ideas")
+    st.write("These are rule-based starting points from roster construction. Use them to start conversations, not as final offers.")
+    teams = league_teams_df(bundle["rosters"], users_by_id, players)
+    if horo:
+        horo_needs = team_needs(horo, players)
+        st.write(f"**HORO1 needs:** {horo_needs}")
+    trade_rows=[]
+    for _, row in teams.iterrows():
+        if row["Display"] == HORO_DISPLAY_NAME: continue
+        fit=[]
+        if row["QB"] >= 3: fit.append("QB surplus")
+        if row["RB"] >= 6: fit.append("RB surplus")
+        if row["WR"] >= 7: fit.append("WR surplus")
+        if row["TE"] >= 3: fit.append("TE surplus")
+        if fit:
+            trade_rows.append({"Team": row["Team"], "Display": row["Display"], "Potential Angle": ", ".join(fit), "Their Needs": row["Needs"]})
+    st.dataframe(pd.DataFrame(trade_rows), use_container_width=True, hide_index=True)
+    st.markdown("""
+**Suggested approach:** target teams with a surplus at the position you need and offer depth/picks rather than core assets. For HORO1, avoid moving foundational QBs or Trey McBride unless the return is overwhelming.
+""")
 
 with tabs[5]:
     st.subheader("Sleeper Trending")
-    a = pd.DataFrame(trending_add)
-    d = pd.DataFrame(trending_drop)
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("### Adds")
-        st.dataframe(a, use_container_width=True, hide_index=True)
-    with col2:
-        st.markdown("### Drops")
-        st.dataframe(d, use_container_width=True, hide_index=True)
+    a,b = st.columns(2)
+    with a:
+        st.write("Trending Adds")
+        st.dataframe(trending_df(bundle["trending_add"], players), use_container_width=True, hide_index=True)
+    with b:
+        st.write("Trending Drops")
+        st.dataframe(trending_df(bundle["trending_drop"], players), use_container_width=True, hide_index=True)
 
 with tabs[6]:
     st.subheader("Data Status")
-    st.write("Last refresh:", datetime.now(timezone.utc).isoformat())
-    st.json({"league_id": LEAGUE_ID, "draft_id": DRAFT_ID, "horo_roster_id": horo_roster_id, "files_saved_to": str(DATA_DIR)})
+    st.json({
+        "league_id": LEAGUE_ID,
+        "draft_id": DRAFT_ID,
+        "league_status": league.get("status"),
+        "season": league.get("season"),
+        "draft_status": draft.get("status"),
+        "picks_loaded": len(picks),
+        "rosters_loaded": len(bundle["rosters"]),
+        "users_loaded": len(bundle["users"]),
+        "rankings_loaded": len(rankings),
+    })

@@ -1,39 +1,28 @@
-# HoRo Dynasty War Room — Free Shareable Web App
+# HoRo Dynasty War Room
 
-This version is designed for **Streamlit Community Cloud**, which has a free tier and gives you a shareable link.
+Free Streamlit web app for the St. Jude Heroes Dynasty league.
+
+## Deploy on Streamlit Community Cloud
+
+Use:
+
+- Repository: `dhorowitz-lab/horo-war-room`
+- Branch: `main`
+- Main file path: `app.py`
+
+## App Features
+
+- Live Sleeper sync
+- Draft board
+- Best available board
+- HORO1 roster
+- All teams / team needs
+- Trade idea starter board
+- Trending adds/drops
 
 ## Files
-- `app.py` — the web app
-- `requirements.txt` — dependencies
-- `fantasycalc_dynasty_rankings.csv` — your overall dynasty rankings, if included
-- `fantasycalc_dynasty_rookie_rankings.csv` — your rookie rankings, if included
 
-## Free deployment steps
-
-1. Create a free GitHub account if you do not have one.
-2. Create a new repository named `horo-war-room`.
-3. Upload all files from this folder into that repository.
-4. Go to https://share.streamlit.io or https://streamlit.io/cloud.
-5. Sign in with GitHub.
-6. Click **New app**.
-7. Select your `horo-war-room` repository.
-8. Set the main file path to:
-
-```text
-app.py
-```
-
-9. Click **Deploy**.
-10. Streamlit gives you a public URL you can share with your partner.
-
-## What your partner does
-
-They just open the Streamlit URL in their browser. No install needed.
-
-## Updating data
-
-The app pulls Sleeper data live from the public Sleeper API whenever you click **Update Sleeper Data** or refresh the app.
-
-## Notes
-
-This is free and shareable, but anyone with the link can view it unless you configure Streamlit access controls.
+- `app.py` — Streamlit app
+- `requirements.txt` — Python dependencies
+- `fantasycalc_dynasty_rankings.csv` — dynasty values
+- `fantasycalc_dynasty_rookie_rankings.csv` — rookie values

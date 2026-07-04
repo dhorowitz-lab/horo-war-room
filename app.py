@@ -167,9 +167,11 @@ def best_available_df(rankings: pd.DataFrame, rosters: List[dict], picks: List[d
     df = rankings.copy()
     df = df[~df["sleeper_id"].astype(str).isin(unavailable)]
     # fill missing metadata from Sleeper by ID
-    def fill_name(row):
-        if row["name"] and row["name"].lower() not in ["nan", "none"]: return row["name"]
-        return player_name(str(row["sleeper_id"]), players)
+	def fill_name(row):
+    name = row.get("name", "")
+    if pd.notna(name) and str(name).strip().lower() not in ["", "nan", "none"]:
+        return str(name).strip()
+    return player_name(str(row["sleeper_id"]), players)
     df["Player"] = df.apply(fill_name, axis=1)
     df["Pos"] = df.apply(lambda r: r["pos"] if r["pos"] and str(r["pos"]).lower() != "nan" else player_pos(str(r["sleeper_id"]), players), axis=1)
     df["NFL"] = df.apply(lambda r: r["team"] if r["team"] and str(r["team"]).lower() != "nan" else player_team(str(r["sleeper_id"]), players), axis=1)

@@ -51,7 +51,7 @@ def load_rankings() -> pd.DataFrame:
     frames = []
     for path in paths:
         try:
-            df = pd.read_csv(path, sep=None, engine="python", encoding="utf-8-sig")
+            df = pd.read_csv(path)
             df["_source"] = path
             frames.append(df)
         except Exception:
@@ -67,25 +67,26 @@ def load_rankings() -> pd.DataFrame:
     name_col = pick("player", "name", "full_name", "player name")
     pos_col = pick("position", "pos")
     team_col = pick("team", "nfl team")
-    rank_col = pick("rank", "overall rank", "overall", "dynasty rank", "overallrank")
+    rank_col = pick("rank", "overall rank", "overall", "dynasty rank")
     val_col = pick("value", "trade value", "fantasycalc value")
-    sleeper_col = pick("sleeper id", "sleeper_id", "sleeper player id", "player_id", "sleeperid")
+    sleeper_col = pick("sleeper id", "sleeper_id", "sleeper player id", "player_id")
     out = pd.DataFrame()
     out["name"] = raw[name_col].astype(str) if name_col else ""
     out["pos"] = raw[pos_col].astype(str) if pos_col else ""
     out["team"] = raw[team_col].astype(str) if team_col else ""
     out["rank"] = pd.to_numeric(raw[rank_col], errors="coerce") if rank_col else range(1, len(raw)+1)
-    out["value"] = pd.to_numeric(raw[val_col], errors="coerce") if val_col else pd.NA
+    out["value"] = pd.to_numeric(raw[val_col], errors="coerce") if val_col else None
     out["sleeper_id"] = raw[sleeper_col].astype(str) if sleeper_col else ""
     out["source"] = raw["_source"]
-    # Clean text fields and remove blank/header-like rows. FantasyCalc exports are semicolon-delimited;
-    # if parsed correctly, these fields will be populated.
-    for col in ["name", "pos", "team", "sleeper_id"]:
-        out[col] = out[col].astype(str).str.strip().str.strip('"')
     out = out.dropna(subset=["rank"]).sort_values(["rank", "source"])
-    valid_name = ~out["name"].str.lower().isin(["", "nan", "none", "null"])
-    valid_id = ~out["sleeper_id"].str.lower().isin(["", "nan", "none", "null"])
-    out = out[valid_name | valid_id]
+
+    # Remove truly blank ranking rows so Best Available does not show an Empty row
+    out["name"] = out["name"].astype(str).str.strip()
+    out["sleeper_id"] = out["sleeper_id"].astype(str).str.strip()
+    blank_name = out["name"].str.lower().isin(["", "nan", "none", "null"])
+    blank_id = out["sleeper_id"].str.lower().isin(["", "nan", "none", "null"])
+    out = out[~(blank_name & blank_id)]
+
     out = out.drop_duplicates(subset=["sleeper_id", "name"], keep="first")
     return out
 
@@ -171,7 +172,13 @@ def best_available_df(rankings: pd.DataFrame, rosters: List[dict], picks: List[d
         return pd.DataFrame()
     unavailable = rostered_ids(rosters) | drafted_ids(picks)
     df = rankings.copy()
-    df = df[~df["sleeper_id"].astype(str).isin(unavailable)]
+
+    # Only remove drafted/rostered players by Sleeper ID when we actually have a valid Sleeper ID.
+    # This prevents blank/missing ranking IDs from collapsing Best Available into a single Empty row.
+    df["sleeper_id"] = df["sleeper_id"].astype(str).str.strip()
+    valid_id = ~df["sleeper_id"].str.lower().isin(["", "nan", "none", "null"])
+    df = df[~(valid_id & df["sleeper_id"].isin(unavailable))]
+
     # fill missing metadata from Sleeper by ID
     def clean_text(value: Any) -> str:
         if value is None or pd.isna(value):

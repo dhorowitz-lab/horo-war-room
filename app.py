@@ -167,14 +167,31 @@ def best_available_df(rankings: pd.DataFrame, rosters: List[dict], picks: List[d
     df = rankings.copy()
     df = df[~df["sleeper_id"].astype(str).isin(unavailable)]
     # fill missing metadata from Sleeper by ID
-	def fill_name(row):
-    name = row.get("name", "")
-    if pd.notna(name) and str(name).strip().lower() not in ["", "nan", "none"]:
-        return str(name).strip()
-    return player_name(str(row["sleeper_id"]), players)
+    def clean_text(value: Any) -> str:
+        if value is None or pd.isna(value):
+            return ""
+        text = str(value).strip()
+        if text.lower() in ["", "nan", "none", "null"]:
+            return ""
+        return text
+
+    def fill_name(row):
+        name = clean_text(row.get("name", ""))
+        if name:
+            return name
+        return player_name(clean_text(row.get("sleeper_id", "")), players)
+
+    def fill_pos(row):
+        pos = clean_text(row.get("pos", ""))
+        return pos or player_pos(clean_text(row.get("sleeper_id", "")), players)
+
+    def fill_team(row):
+        team = clean_text(row.get("team", ""))
+        return team or player_team(clean_text(row.get("sleeper_id", "")), players)
+
     df["Player"] = df.apply(fill_name, axis=1)
-    df["Pos"] = df.apply(lambda r: r["pos"] if r["pos"] and str(r["pos"]).lower() != "nan" else player_pos(str(r["sleeper_id"]), players), axis=1)
-    df["NFL"] = df.apply(lambda r: r["team"] if r["team"] and str(r["team"]).lower() != "nan" else player_team(str(r["sleeper_id"]), players), axis=1)
+    df["Pos"] = df.apply(fill_pos, axis=1)
+    df["NFL"] = df.apply(fill_team, axis=1)
     out = df.rename(columns={"rank": "Rank", "value": "Value", "source": "Source", "sleeper_id": "Sleeper ID"})
     return out[["Rank", "Player", "Pos", "NFL", "Value", "Source", "Sleeper ID"]].head(100)
 
@@ -211,7 +228,7 @@ def trending_df(items: List[dict], players: Dict[str, Any]) -> pd.DataFrame:
 with st.sidebar:
     st.title("🏈 HoRo War Room")
     st.caption("St. Jude Heroes Dynasty")
-    if st.button("🔄 Refresh Sleeper Data", use_container_width=True):
+    if st.button("🔄 Refresh Sleeper Data", width="stretch"):
         st.cache_data.clear()
         st.rerun()
     st.divider()
@@ -252,7 +269,7 @@ tabs = st.tabs(["🏈 Draft Board", "⭐ Best Available", "👤 HORO1", "👥 Le
 with tabs[0]:
     st.subheader("Live Draft Board")
     board = draft_board_df(picks, rosters_by_id, users_by_id)
-    st.dataframe(board, use_container_width=True, hide_index=True)
+    st.dataframe(board, width="stretch", hide_index=True)
 
 with tabs[1]:
     st.subheader("Best Available")
@@ -262,7 +279,7 @@ with tabs[1]:
     else:
         pos = st.multiselect("Filter position", sorted([p for p in ba["Pos"].dropna().unique() if p]), default=[])
         show = ba if not pos else ba[ba["Pos"].isin(pos)]
-        st.dataframe(show.head(50), use_container_width=True, hide_index=True)
+        st.dataframe(show.head(50), width="stretch", hide_index=True)
         st.info("Draft recommendation for HORO1: prioritize the top remaining WR/RB value unless an elite SuperFlex QB falls.")
 
 with tabs[2]:
@@ -271,12 +288,12 @@ with tabs[2]:
         st.error("Could not find HORO1 in league users. Check display name spelling.")
     else:
         st.write(f"Roster ID: {horo.get('roster_id')} | Owner ID: {horo.get('owner_id')}")
-        st.dataframe(roster_df(horo, players), use_container_width=True, hide_index=True)
+        st.dataframe(roster_df(horo, players), width="stretch", hide_index=True)
 
 with tabs[3]:
     st.subheader("All League Teams")
     teams = league_teams_df(bundle["rosters"], users_by_id, players)
-    st.dataframe(teams, use_container_width=True, hide_index=True)
+    st.dataframe(teams, width="stretch", hide_index=True)
 
 with tabs[4]:
     st.subheader("Trade Ideas")
@@ -295,7 +312,7 @@ with tabs[4]:
         if row["TE"] >= 3: fit.append("TE surplus")
         if fit:
             trade_rows.append({"Team": row["Team"], "Display": row["Display"], "Potential Angle": ", ".join(fit), "Their Needs": row["Needs"]})
-    st.dataframe(pd.DataFrame(trade_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(trade_rows), width="stretch", hide_index=True)
     st.markdown("""
 **Suggested approach:** target teams with a surplus at the position you need and offer depth/picks rather than core assets. For HORO1, avoid moving foundational QBs or Trey McBride unless the return is overwhelming.
 """)
@@ -305,10 +322,10 @@ with tabs[5]:
     a,b = st.columns(2)
     with a:
         st.write("Trending Adds")
-        st.dataframe(trending_df(bundle["trending_add"], players), use_container_width=True, hide_index=True)
+        st.dataframe(trending_df(bundle["trending_add"], players), width="stretch", hide_index=True)
     with b:
         st.write("Trending Drops")
-        st.dataframe(trending_df(bundle["trending_drop"], players), use_container_width=True, hide_index=True)
+        st.dataframe(trending_df(bundle["trending_drop"], players), width="stretch", hide_index=True)
 
 with tabs[6]:
     st.subheader("Data Status")

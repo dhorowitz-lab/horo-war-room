@@ -12,7 +12,6 @@ HORO_DISPLAY_NAME = "HORO1"
 BASE = "https://api.sleeper.app/v1"
 
 st.set_page_config(page_title="HoRo War Room", page_icon="🏈", layout="wide")
-
 st.markdown("""
 <style>
 .block-container {padding-top: 1.2rem;}

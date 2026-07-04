@@ -79,14 +79,6 @@ def load_rankings() -> pd.DataFrame:
     out["sleeper_id"] = raw[sleeper_col].astype(str) if sleeper_col else ""
     out["source"] = raw["_source"]
     out = out.dropna(subset=["rank"]).sort_values(["rank", "source"])
-
-    # Remove truly blank ranking rows so Best Available does not show an Empty row
-    out["name"] = out["name"].astype(str).str.strip()
-    out["sleeper_id"] = out["sleeper_id"].astype(str).str.strip()
-    blank_name = out["name"].str.lower().isin(["", "nan", "none", "null"])
-    blank_id = out["sleeper_id"].str.lower().isin(["", "nan", "none", "null"])
-    out = out[~(blank_name & blank_id)]
-
     out = out.drop_duplicates(subset=["sleeper_id", "name"], keep="first")
     return out
 
@@ -172,13 +164,7 @@ def best_available_df(rankings: pd.DataFrame, rosters: List[dict], picks: List[d
         return pd.DataFrame()
     unavailable = rostered_ids(rosters) | drafted_ids(picks)
     df = rankings.copy()
-
-    # Only remove drafted/rostered players by Sleeper ID when we actually have a valid Sleeper ID.
-    # This prevents blank/missing ranking IDs from collapsing Best Available into a single Empty row.
-    df["sleeper_id"] = df["sleeper_id"].astype(str).str.strip()
-    valid_id = ~df["sleeper_id"].str.lower().isin(["", "nan", "none", "null"])
-    df = df[~(valid_id & df["sleeper_id"].isin(unavailable))]
-
+    df = df[~df["sleeper_id"].astype(str).isin(unavailable)]
     # fill missing metadata from Sleeper by ID
     def clean_text(value: Any) -> str:
         if value is None or pd.isna(value):

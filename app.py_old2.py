@@ -51,7 +51,7 @@ def load_rankings() -> pd.DataFrame:
     frames = []
     for path in paths:
         try:
-            df = pd.read_csv(path)
+            df = pd.read_csv(path, sep=None, engine="python", encoding="utf-8-sig")
             df["_source"] = path
             frames.append(df)
         except Exception:
@@ -78,7 +78,23 @@ def load_rankings() -> pd.DataFrame:
     out["value"] = pd.to_numeric(raw[val_col], errors="coerce") if val_col else None
     out["sleeper_id"] = raw[sleeper_col].astype(str) if sleeper_col else ""
     out["source"] = raw["_source"]
+
+    # Clean fields robustly. FantasyCalc exports may include blank rows and draft-pick assets.
+    for col in ["name", "pos", "team", "sleeper_id"]:
+        out[col] = out[col].astype(str).str.strip().str.strip('"')
+
     out = out.dropna(subset=["rank"]).sort_values(["rank", "source"])
+
+    invalid = ["", "nan", "none", "null"]
+    valid_name = ~out["name"].str.lower().isin(invalid)
+    valid_id = ~out["sleeper_id"].str.lower().isin(invalid)
+    out = out[valid_name | valid_id]
+
+    # Remove FantasyCalc draft-pick assets from Best Available player pool.
+    out = out[out["pos"].str.upper() != "PICK"]
+    out = out[~out["name"].str.lower().str.contains(r"^20\d{2}\s+(pick|1st|2nd|3rd|4th|5th|6th|7th)", regex=True, na=False)]
+    out = out[~out["sleeper_id"].str.upper().str.startswith(("DP_", "FP_"))]
+
     out = out.drop_duplicates(subset=["sleeper_id", "name"], keep="first")
     return out
 
@@ -127,29 +143,6 @@ def rostered_ids(rosters: List[dict]) -> set:
             ids.add(str(pid))
     return ids
 
-def normalized_name(name: Any) -> str:
-    if name is None or pd.isna(name):
-        return ""
-    return " ".join(str(name).strip().lower().replace(".", "").replace("'", "").split())
-
-def unavailable_names(rosters: List[dict], picks: List[dict], players: Dict[str, Any]) -> set:
-    names = set()
-    for r in rosters:
-        for pid in r.get("players") or []:
-            n = normalized_name(player_name(str(pid), players))
-            if n and n != "empty":
-                names.add(n)
-    for p in picks:
-        meta = p.get("metadata") or {}
-        n = normalized_name(f"{meta.get('first_name','')} {meta.get('last_name','')}")
-        if n:
-            names.add(n)
-        pid = str(p.get("player_id", ""))
-        n2 = normalized_name(player_name(pid, players))
-        if n2 and n2 != "empty":
-            names.add(n2)
-    return names
-
 def draft_board_df(picks: List[dict], rosters_by_id: Dict[int, dict], users_by_id: Dict[str, dict]) -> pd.DataFrame:
     rows = []
     for p in sorted(picks, key=lambda x: x.get("pick_no", 0)):
@@ -186,21 +179,29 @@ def best_available_df(rankings: pd.DataFrame, rosters: List[dict], picks: List[d
     if rankings.empty:
         return pd.DataFrame()
     unavailable = rostered_ids(rosters) | drafted_ids(picks)
-    unavailable_by_name = unavailable_names(rosters, picks, players)
+    drafted_names = set()
+    for p in picks:
+        meta = p.get("metadata") or {}
+        nm = f"{meta.get('first_name','')} {meta.get('last_name','')}".strip().lower()
+        if nm:
+            drafted_names.add(nm)
+
     df = rankings.copy()
+    df["sleeper_id"] = df["sleeper_id"].astype(str).str.strip()
+    df["name"] = df["name"].astype(str).str.strip()
+    df["pos"] = df["pos"].astype(str).str.strip()
 
-    # Remove non-player assets from FantasyCalc rankings, such as future picks.
-    for col in ["pos", "sleeper_id", "name"]:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-    df = df[df["pos"].str.upper().ne("PICK")]
-    df = df[~df["name"].str.lower().str.contains(r"^\d{4} pick|^\d{4} 1st|^\d{4} 2nd|^\d{4} 3rd|pick 1\.", regex=True, na=False)]
+    invalid = ["", "nan", "none", "null"]
+    valid_id = ~df["sleeper_id"].str.lower().isin(invalid)
 
-    # Remove players already drafted or already rostered. FantasyCalc often has blank Sleeper IDs,
-    # so we filter both by Sleeper ID and by normalized player name.
-    valid_id = ~df["sleeper_id"].str.lower().isin(["", "nan", "none", "null"])
+    # Remove already-drafted/rostered players by Sleeper ID when present.
     df = df[~(valid_id & df["sleeper_id"].isin(unavailable))]
-    df = df[~df["name"].map(normalized_name).isin(unavailable_by_name)]
+    # Also remove drafted players by name because some ranking rows have missing Sleeper IDs.
+    df = df[~df["name"].str.lower().isin(drafted_names)]
+    # Never show FantasyCalc pick assets in this player-only board.
+    df = df[df["pos"].str.upper() != "PICK"]
+    df = df[~df["sleeper_id"].str.upper().str.startswith(("DP_", "FP_"))]
+    df = df[~df["name"].str.lower().str.contains(r"^20\d{2}\s+(pick|1st|2nd|3rd|4th|5th|6th|7th)", regex=True, na=False)]
 
     # fill missing metadata from Sleeper by ID
     def clean_text(value: Any) -> str:

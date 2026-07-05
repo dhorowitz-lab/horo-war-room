@@ -1,28 +1,28 @@
-# HoRo Dynasty War Room
+# HoRo War Room - Master Matching Fix
 
-Free Streamlit web app for the St. Jude Heroes Dynasty league.
+This version fixes the Best Available tab by treating Sleeper as the source of truth.
 
-## Deploy on Streamlit Community Cloud
+## What changed
 
-Use:
+- FantasyCalc files are read with delimiter sniffing, so semicolon CSV files work.
+- Draft pick assets such as `2026 Pick 1.01` are filtered out.
+- Rostered and drafted players are removed by both Sleeper ID and normalized player name.
+- A diagnostics panel is included inside the Best Available tab and Data tab.
 
-- Repository: `dhorowitz-lab/horo-war-room`
-- Branch: `main`
-- Main file path: `app.py`
+## Install
 
-## App Features
+Replace the files in your GitHub repo with these files, then commit and push.
 
-- Live Sleeper sync
-- Draft board
-- Best available board
-- HORO1 roster
-- All teams / team needs
-- Trade idea starter board
-- Trending adds/drops
+Repository folder on Dave's Mac:
 
-## Files
+```text
+/Users/davehorowitz/Documents/GitHub/horo-war-room
+```
 
-- `app.py` — Streamlit app
-- `requirements.txt` — Python dependencies
-- `fantasycalc_dynasty_rankings.csv` — dynasty values
-- `fantasycalc_dynasty_rookie_rankings.csv` — rookie values
+Streamlit settings:
+
+```text
+Repository: dhorowitz-lab/horo-war-room
+Branch: main
+Main file path: app.py
+```

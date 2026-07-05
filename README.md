@@ -1,28 +1,38 @@
-# HoRo War Room - Master Matching Fix
+# HoRo War Room v2
 
-This version fixes the Best Available tab by treating Sleeper as the source of truth.
+This version uses Sleeper as the source of truth for:
 
-## What changed
+- league users and team names
+- rosters
+- draft board
+- drafted players
+- rostered players
+- trending adds/drops
 
-- FantasyCalc files are read with delimiter sniffing, so semicolon CSV files work.
-- Draft pick assets such as `2026 Pick 1.01` are filtered out.
-- Rostered and drafted players are removed by both Sleeper ID and normalized player name.
-- A diagnostics panel is included inside the Best Available tab and Data tab.
+FantasyCalc CSV files are optional ranking inputs. The app removes unavailable players by both Sleeper ID and normalized player name, and filters out draft-pick assets.
 
-## Install
+## Files to keep in the repo
 
-Replace the files in your GitHub repo with these files, then commit and push.
+- app.py
+- requirements.txt
+- services/
+- .streamlit/
+- fantasycalc_dynasty_rankings.csv (optional)
+- fantasycalc_dynasty_rookie_rankings.csv (optional)
 
-Repository folder on Dave's Mac:
+## Deploy
 
-```text
-/Users/davehorowitz/Documents/GitHub/horo-war-room
-```
+Streamlit Cloud settings:
 
-Streamlit settings:
+- Repository: dhorowitz-lab/horo-war-room
+- Branch: main
+- Main file path: app.py
 
-```text
-Repository: dhorowitz-lab/horo-war-room
-Branch: main
-Main file path: app.py
-```
+## Validation
+
+Open the Diagnostics tab after deployment. It should show:
+
+- HORO roster found = True
+- HORO is excluded from RB trade finder = True
+- Draft picks loaded = True
+- Rankings loaded = True, if CSVs are present

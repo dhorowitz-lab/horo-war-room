@@ -51,7 +51,7 @@ def load_rankings() -> pd.DataFrame:
     frames = []
     for path in paths:
         try:
-            df = pd.read_csv(path, sep=None, engine="python", encoding="utf-8-sig")
+            df = pd.read_csv(path)
             df["_source"] = path
             frames.append(df)
         except Exception:
@@ -67,25 +67,29 @@ def load_rankings() -> pd.DataFrame:
     name_col = pick("player", "name", "full_name", "player name")
     pos_col = pick("position", "pos")
     team_col = pick("team", "nfl team")
-    rank_col = pick("rank", "overall rank", "overall", "dynasty rank", "overallrank")
+    rank_col = pick("rank", "overall rank", "overall", "dynasty rank")
     val_col = pick("value", "trade value", "fantasycalc value")
-    sleeper_col = pick("sleeper id", "sleeper_id", "sleeper player id", "player_id", "sleeperid")
+    sleeper_col = pick("sleeper id", "sleeper_id", "sleeper player id", "player_id")
     out = pd.DataFrame()
     out["name"] = raw[name_col].astype(str) if name_col else ""
     out["pos"] = raw[pos_col].astype(str) if pos_col else ""
     out["team"] = raw[team_col].astype(str) if team_col else ""
     out["rank"] = pd.to_numeric(raw[rank_col], errors="coerce") if rank_col else range(1, len(raw)+1)
-    out["value"] = pd.to_numeric(raw[val_col], errors="coerce") if val_col else pd.NA
+    out["value"] = pd.to_numeric(raw[val_col], errors="coerce") if val_col else None
     out["sleeper_id"] = raw[sleeper_col].astype(str) if sleeper_col else ""
     out["source"] = raw["_source"]
-    # Clean text fields and remove blank/header-like rows. FantasyCalc exports are semicolon-delimited;
-    # if parsed correctly, these fields will be populated.
+    # Clean and remove draft-pick placeholder rows from FantasyCalc.
+    # FantasyCalc includes rows like "2026 Pick 1.01" with Pos=PICK and IDs like DP_0_0.
+    # Those are useful for trade value, but they are not players and should not appear in Best Available.
     for col in ["name", "pos", "team", "sleeper_id"]:
-        out[col] = out[col].astype(str).str.strip().str.strip('"')
+        out[col] = out[col].astype(str).str.strip()
+
+    invalid_text = ["", "nan", "none", "null"]
+    out = out[~out["name"].str.lower().isin(invalid_text)]
+    out = out[out["pos"].str.upper() != "PICK"]
+    out = out[~out["sleeper_id"].str.upper().str.startswith(("DP_", "FP_"))]
+
     out = out.dropna(subset=["rank"]).sort_values(["rank", "source"])
-    valid_name = ~out["name"].str.lower().isin(["", "nan", "none", "null"])
-    valid_id = ~out["sleeper_id"].str.lower().isin(["", "nan", "none", "null"])
-    out = out[valid_name | valid_id]
     out = out.drop_duplicates(subset=["sleeper_id", "name"], keep="first")
     return out
 

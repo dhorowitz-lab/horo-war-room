@@ -1,38 +1,25 @@
-# HoRo War Room v2
+# HoRo War Room v3
 
-This version uses Sleeper as the source of truth for:
+This version focuses on reliability and live Sleeper data.
 
-- league users and team names
-- rosters
-- draft board
-- drafted players
-- rostered players
-- trending adds/drops
+## What is new
 
-FantasyCalc CSV files are optional ranking inputs. The app removes unavailable players by both Sleeper ID and normalized player name, and filters out draft-pick assets.
-
-## Files to keep in the repo
-
-- app.py
-- requirements.txt
-- services/
-- .streamlit/
-- fantasycalc_dynasty_rankings.csv (optional)
-- fantasycalc_dynasty_rookie_rankings.csv (optional)
+- League Rosters tab with every team's roster.
+- Future draft picks shown under each team.
+- Current rookie draft picks made shown under each team.
+- HORO1 page includes roster + future picks + current draft picks.
+- Trade Center includes RB Trade Finder and excludes HORO1 as a target.
+- Best Available is rebuilt with stronger filtering.
+- Diagnostics tab confirms live data counts and HORO1 mapping.
 
 ## Deploy
 
-Streamlit Cloud settings:
+Replace your GitHub repo files with these files, then commit and push:
 
-- Repository: dhorowitz-lab/horo-war-room
-- Branch: main
-- Main file path: app.py
+```bash
+git add .
+git commit -m "HoRo War Room v3 roster and picks"
+git push
+```
 
-## Validation
-
-Open the Diagnostics tab after deployment. It should show:
-
-- HORO roster found = True
-- HORO is excluded from RB trade finder = True
-- Draft picks loaded = True
-- Rankings loaded = True, if CSVs are present
+Streamlit Cloud should redeploy automatically.

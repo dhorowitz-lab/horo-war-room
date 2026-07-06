@@ -1,183 +1,183 @@
 from __future__ import annotations
-
 from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
-from services.sleeper import clear_cache, load_league_bundle, load_players, player_name, player_pos, player_team
+from services.sleeper import LEAGUE_ID, DRAFT_ID, load_bundle, load_players
 from services.league import (
-    drafted_ids,
-    drafted_names,
-    draft_board_dataframe,
-    get_horo_roster,
-    league_teams_dataframe,
-    roster_dataframe,
-    rostered_ids,
-    rostered_names,
-    rosters_by_id,
-    users_by_id,
+    users_map, rosters_map, team_label, display_name, get_horo_roster, roster_df,
+    draft_board_df, league_teams_df, future_picks_df, drafted_by_team_df, rb_trade_finder_df,
+    position_counts, team_needs_from_counts, team_surplus_from_counts, player_name, player_pos, player_team
 )
-from services.rankings import best_available_dataframe, load_rankings
-from services.trade import rb_trade_targets, trade_fit_dataframe
+from services.rankings import load_rankings, best_available_df
 
-DEFAULT_LEAGUE_ID = "1322264688641216512"
-DEFAULT_DRAFT_ID = "1322264688645390336"
-DEFAULT_HORO_DISPLAY = "HORO1"
+HORO_DISPLAY_NAME = "HORO1"
 
-st.set_page_config(page_title="HoRo War Room", page_icon="🏈", layout="wide")
-st.markdown(
-    """
+st.set_page_config(page_title="HoRo War Room v3", page_icon="🏈", layout="wide")
+st.markdown("""
 <style>
-.block-container {padding-top: 1rem;}
-.big-title {font-size: 2.25rem; font-weight: 850; margin-bottom: 0;}
-.small-muted {color: #9ca3af; font-size: 0.92rem;}
-.good {color: #86efac; font-weight: 700;}
-.warn {color: #fde68a; font-weight: 700;}
+.block-container { padding-top: 1.1rem; }
+.big-title { font-size: 2.2rem; font-weight: 900; margin-bottom: 0; }
+.small-muted { color: #8a94a6; font-size: 0.9rem; }
+.card { border: 1px solid #263244; border-radius: 16px; padding: 1rem; background: rgba(30,41,59,.35); }
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
 with st.sidebar:
     st.title("🏈 HoRo War Room")
-    st.caption("Live Sleeper-based league intelligence")
-    league_id = st.text_input("Sleeper League ID", DEFAULT_LEAGUE_ID)
-    draft_id = st.text_input("Sleeper Draft ID", DEFAULT_DRAFT_ID)
-    horo_display = st.text_input("Your Sleeper Display Name", DEFAULT_HORO_DISPLAY)
-    if st.button("🔄 Refresh Sleeper Data", width="stretch"):
-        clear_cache()
+    st.caption("v3 league intelligence")
+    if st.button("🔄 Refresh live Sleeper data", width="stretch"):
+        st.cache_data.clear()
         st.rerun()
     st.divider()
-    st.caption("v2: Sleeper is the source of truth. Rankings are only used after unavailable players are removed.")
+    st.caption("League")
+    st.code(LEAGUE_ID)
+    st.caption("Draft")
+    st.code(DRAFT_ID)
+    st.caption("Built for HORO1")
 
 try:
-    bundle = load_league_bundle(league_id, draft_id)
+    bundle = load_bundle()
     players = load_players()
-except Exception as exc:
-    st.error(f"Could not load Sleeper data: {exc}")
+except Exception as e:
+    st.error(f"Could not load Sleeper data: {e}")
     st.stop()
 
-users = users_by_id(bundle["users"])
-rosters = rosters_by_id(bundle["rosters"])
-horo = get_horo_roster(bundle["rosters"], users, horo_display)
-picks = bundle["picks"]
+rankings = load_rankings()
+users_by_id = users_map(bundle["users"])
+rosters_by_id = rosters_map(bundle["rosters"])
+horo = get_horo_roster(bundle["rosters"], users_by_id, HORO_DISPLAY_NAME)
 league = bundle["league"]
 draft = bundle["draft"]
-rankings = load_rankings()
-
-unavailable_ids = rostered_ids(bundle["rosters"]) | drafted_ids(picks)
-unavailable_names = rostered_names(bundle["rosters"], players) | drafted_names(picks)
+picks = bundle["picks"]
+traded_picks = bundle["traded_picks"]
 
 st.markdown('<p class="big-title">HoRo Dynasty War Room</p>', unsafe_allow_html=True)
-st.caption(f"Refreshed: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
+st.caption(f"Live Sleeper refresh in app: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4 = st.columns(4)
 c1.metric("Draft Status", draft.get("status", "unknown"))
 c2.metric("Current Pick", (league.get("metadata") or {}).get("current_pick_no", "—"))
 on_clock_id = (league.get("metadata") or {}).get("on_the_clock_user_id")
-c3.metric("On Clock", (users.get(str(on_clock_id), {}) or {}).get("display_name", "—"))
+c3.metric("On Clock", users_by_id.get(str(on_clock_id), {}).get("display_name", "—"))
 c4.metric("Picks Made", len(picks))
-c5.metric("Ranked Players", len(rankings))
 
-if not horo:
-    st.warning(f"Could not find your roster for display name '{horo_display}'. Check the sidebar value.")
-
-tabs = st.tabs([
-    "🏈 Draft Board",
-    "⭐ Best Available",
-    "👤 My Team",
-    "👥 League Teams",
-    "🤝 RB Trade Finder",
-    "📈 Trending",
-    "🧪 Diagnostics",
-])
+tabs = st.tabs(["🏠 Dashboard", "🏈 Draft Room", "⭐ Best Available", "👤 HORO1", "👥 League Rosters", "🤝 Trade Center", "📈 Trending", "⚙️ Diagnostics"])
 
 with tabs[0]:
-    st.subheader("Live Draft Board")
-    board = draft_board_dataframe(picks, rosters, users)
-    st.dataframe(board, width="stretch", hide_index=True)
+    st.subheader("League Snapshot")
+    a, b = st.columns([2, 1])
+    with a:
+        teams = league_teams_df(bundle["rosters"], users_by_id, players)
+        st.dataframe(teams, width="stretch", hide_index=True)
+    with b:
+        if horo:
+            counts = position_counts(horo, players)
+            st.markdown("### HORO1")
+            st.write(f"**Roster ID:** {horo.get('roster_id')}")
+            st.write(f"**Needs:** {team_needs_from_counts(counts)}")
+            st.write(f"**Surplus:** {team_surplus_from_counts(counts)}")
+            st.json(counts)
+        else:
+            st.error("HORO1 not found in Sleeper users.")
 
 with tabs[1]:
-    st.subheader("Best Available")
-    st.caption("This removes drafted and rostered players using Sleeper IDs and normalized player names.")
-    ba = best_available_dataframe(rankings, players, unavailable_ids, unavailable_names)
-    if ba.empty:
-        st.warning("No available ranked players found. Check Diagnostics for ranking import and filters.")
-    else:
-        positions = sorted([p for p in ba["Pos"].dropna().unique() if p])
-        selected = st.multiselect("Filter by position", positions, default=[])
-        view = ba if not selected else ba[ba["Pos"].isin(selected)]
-        st.dataframe(view.head(75), width="stretch", hide_index=True)
-        rb_view = ba[ba["Pos"].str.upper() == "RB"].head(15)
-        if not rb_view.empty:
-            st.markdown("#### Top Available RBs")
-            st.dataframe(rb_view, width="stretch", hide_index=True)
+    st.subheader("Live Draft Board")
+    board = draft_board_df(picks, rosters_by_id, users_by_id)
+    st.dataframe(board, width="stretch", hide_index=True)
 
 with tabs[2]:
-    st.subheader(f"{horo_display} Roster")
-    if horo:
-        st.write(f"Roster ID: **{horo.get('roster_id')}** | Owner ID: `{horo.get('owner_id')}`")
-        st.dataframe(roster_dataframe(horo, players), width="stretch", hide_index=True)
+    st.subheader("Best Available")
+    st.caption("Uses FantasyCalc files when present, then removes drafted and rostered players by Sleeper ID and normalized player name.")
+    if rankings.empty:
+        st.warning("No rankings loaded. Add FantasyCalc CSVs to the repo, or use the Draft Room/League tabs for live Sleeper data.")
+    else:
+        pos_filter = st.selectbox("Position filter", ["ALL", "QB", "RB", "WR", "TE"], index=0)
+        pos = None if pos_filter == "ALL" else pos_filter
+        ba = best_available_df(rankings, bundle["rosters"], picks, players, position=pos, limit=150)
+        st.dataframe(ba.head(75), width="stretch", hide_index=True)
+        st.caption(f"Rankings loaded: {len(rankings)} | Showing: {len(ba.head(75))}")
 
 with tabs[3]:
-    st.subheader("League Teams")
-    teams = league_teams_dataframe(bundle["rosters"], users, players)
-    st.dataframe(teams, width="stretch", hide_index=True)
+    st.subheader("HORO1 Front Office")
+    if not horo:
+        st.error("Could not find HORO1 in league users.")
+    else:
+        st.markdown("### Current Roster")
+        st.dataframe(roster_df(horo, players), width="stretch", hide_index=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("### Future Draft Picks")
+            picks_df = future_picks_df(int(horo.get("roster_id")), bundle["rosters"], traded_picks, users_by_id)
+            st.dataframe(picks_df, width="stretch", hide_index=True)
+        with col2:
+            st.markdown("### Rookie Draft Picks Made")
+            drafted_df = drafted_by_team_df(int(horo.get("roster_id")), picks)
+            if drafted_df.empty:
+                st.info("No draft picks made by HORO1 roster in current draft data.")
+            else:
+                st.dataframe(drafted_df, width="stretch", hide_index=True)
 
 with tabs[4]:
-    st.subheader("RB Trade Finder")
-    st.caption("Find teams with RB surplus and possible WR need. This excludes your own roster by display name.")
-    fits = trade_fit_dataframe(bundle["rosters"], users, players, horo_display)
-    st.markdown("#### Best team trade fits")
-    st.dataframe(fits, width="stretch", hide_index=True)
-    st.markdown("#### Individual RBs to scout")
-    targets = rb_trade_targets(bundle["rosters"], users, players, horo_display)
-    st.dataframe(targets, width="stretch", hide_index=True)
-    st.info("Use this as a scouting list, not a final valuation. Next step is adding FantasyCalc value to estimate fair offers.")
+    st.subheader("League Rosters + Draft Picks")
+    teams = league_teams_df(bundle["rosters"], users_by_id, players)
+    labels = [f"{row['Team']} ({row['Display']}) — Roster {row['Roster ID']}" for _, row in teams.iterrows()]
+    selected = st.selectbox("Choose team", labels)
+    selected_rid = int(selected.split("Roster ")[-1])
+    selected_roster = rosters_by_id[selected_rid]
+    st.markdown(f"### {team_label(selected_roster, users_by_id)}")
+    counts = position_counts(selected_roster, players)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("QB", counts.get("QB", 0)); m2.metric("RB", counts.get("RB", 0)); m3.metric("WR", counts.get("WR", 0)); m4.metric("TE", counts.get("TE", 0))
+    st.write(f"**Needs:** {team_needs_from_counts(counts)}  |  **Surplus:** {team_surplus_from_counts(counts)}")
+    rtab1, rtab2, rtab3 = st.tabs(["Roster", "Future Picks", "Draft Picks Made"])
+    with rtab1:
+        st.dataframe(roster_df(selected_roster, players), width="stretch", hide_index=True)
+    with rtab2:
+        st.dataframe(future_picks_df(selected_rid, bundle["rosters"], traded_picks, users_by_id), width="stretch", hide_index=True)
+    with rtab3:
+        df = drafted_by_team_df(selected_rid, picks)
+        if df.empty:
+            st.info("No current draft picks shown for this roster.")
+        else:
+            st.dataframe(df, width="stretch", hide_index=True)
 
 with tabs[5]:
+    st.subheader("Trade Center")
+    st.markdown("### RB Trade Finder for HORO1")
+    st.caption("Finds teams with RB depth and/or WR needs. HORO1 is excluded from targets.")
+    trade = rb_trade_finder_df(bundle["rosters"], users_by_id, players, HORO_DISPLAY_NAME)
+    st.dataframe(trade, width="stretch", hide_index=True)
+    st.markdown("### Suggested Use")
+    st.write("Start with teams at the top of the list. Offer WR depth or picks for RB depth, but avoid moving core assets unless the RB is a true upgrade.")
+
+with tabs[6]:
     st.subheader("Sleeper Trending")
     def trending_df(items):
-        rows = []
+        rows=[]
         for item in items:
-            pid = str(item.get("player_id"))
-            rows.append({
-                "Player": player_name(pid, players),
-                "Pos": player_pos(pid, players),
-                "NFL": player_team(pid, players),
-                "Count": item.get("count"),
-                "Sleeper ID": pid,
-            })
+            pid=str(item.get("player_id"))
+            rows.append({"Player": player_name(pid, players), "Pos": player_pos(pid, players), "NFL": player_team(pid, players), "Count": item.get("count"), "Sleeper ID": pid})
         return pd.DataFrame(rows)
     a, b = st.columns(2)
     with a:
-        st.markdown("#### Adds")
+        st.markdown("### Adds")
         st.dataframe(trending_df(bundle["trending_add"]), width="stretch", hide_index=True)
     with b:
-        st.markdown("#### Drops")
+        st.markdown("### Drops")
         st.dataframe(trending_df(bundle["trending_drop"]), width="stretch", hide_index=True)
 
-with tabs[6]:
+with tabs[7]:
     st.subheader("Diagnostics")
     st.json({
-        "league_id": league_id,
-        "draft_id": draft_id,
-        "horo_display": horo_display,
-        "horo_roster_id": horo.get("roster_id") if horo else None,
+        "league_id": LEAGUE_ID,
+        "draft_id": DRAFT_ID,
         "users_loaded": len(bundle["users"]),
         "rosters_loaded": len(bundle["rosters"]),
         "picks_loaded": len(picks),
-        "rankings_loaded_after_cleaning": len(rankings),
-        "unavailable_ids": len(unavailable_ids),
-        "unavailable_names": len(unavailable_names),
+        "traded_picks_loaded": len(traded_picks),
+        "rankings_loaded": len(rankings),
+        "horo_found": bool(horo),
+        "horo_roster_id": horo.get("roster_id") if horo else None,
+        "horo_display": display_name(horo, users_by_id) if horo else None,
     })
-    st.markdown("#### First 25 cleaned ranking rows")
-    st.dataframe(rankings.head(25), width="stretch", hide_index=True)
-    st.markdown("#### Validation checks")
-    checks = []
-    checks.append({"Check": "HORO roster found", "Result": bool(horo)})
-    if horo:
-        checks.append({"Check": "HORO is excluded from RB trade finder", "Result": horo_display not in set(fits.get("Display", []))})
-    checks.append({"Check": "Draft picks loaded", "Result": len(picks) > 0})
-    checks.append({"Check": "Rankings loaded", "Result": len(rankings) > 0})
-    st.dataframe(pd.DataFrame(checks), width="stretch", hide_index=True)
